@@ -1,0 +1,334 @@
+---
+title: "Predictions of Stock Vaules using LinkedIn Data"
+author: "Suren Rathnayake"
+date: "29 July 2019"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+## Data
+
+The data contain daily records of number of employees of 
+a number of companis (who uses linkedin) and the number of
+linkedin followers. The data were obtained from the 
+website <https://blog.thedataincubator.com/tag/data-sources/>. 
+
+Here, I am investigating the predictability of the stock 
+prices based on the number of emploees and followers.
+
+```{r read, message=FALSE}
+library(data.table)
+library(tidyverse)
+library(tidyr)
+library(quantmod)
+
+dlink <- fread("temp_datalab_records_linkedin_company.csv")
+
+summary(dlink)
+head(dlink)
+```
+
+Format the numeric and date columns.
+```{r pressure, echo=FALSE}
+cols_convert_to_num <- c("followers_count", "employees_on_platform")
+dlink[,(cols_convert_to_num):= lapply(.SD, as.numeric), 
+										.SDcols = cols_convert_to_num]
+
+cols_convert_to_date <- c("date_added",  "date_updated")
+dlink[,(cols_convert_to_date) := lapply(.SD, function(x) 
+	as.Date(as.POSIXct(x, format = "%Y-%m-%d %H:%M:%S"), format='%Y-%m-%d')), 
+			.SDcols = cols_convert_to_date]
+```
+
+# Getting Stock Values Data
+
+The `quantmod` provides a number functions to access and
+handle stock trading data. The following function 
+a) downloads the data for a given company, 
+b) aligns with the LinkedIn data based on the `added_date`, and
+c) extracts interesting information for the particular company, as well as those other who are in the same industry.
+
+```{r, message=FALSE}
+collate_data <- function(dlink, name, sym, 
+                     src = "yahoo") {
+
+  linked_data <- dlink[company_name == name, .(date_added, company_name, 
+                                               followers_count, employees_on_platform)]
+  # handle duplicates
+  vars <- c("employees_on_platform", "followers_count")
+  linked_data[, (vars) := lapply(.SD, function(y) as.vector(mean(y))),
+                  by = date_added, .SDcols = vars]
+  linked_data <- linked_data[!duplicated(date_added)]
+
+	date_range <- range(linked_data$date_added)
+	getSymbols(sym, src = src, from = date_range[1], to = date_range[2])
+  stock_data <- get(sym) 
+  
+	comm_dates <- linked_data$date_added[linked_data$date_added %in% as.Date(time(stock_data))]
+
+  linked_data <- linked_data[date_added %in% comm_dates]
+  stock_data <- stock_data[as.Date(time(stock_data)) %in% comm_dates]
+
+  # "Open"     "High"     "Low"      "Close"    "Volume" "Adjusted"
+  dt <- data.table(employees_on_platform = linked_data$employees_on_platform, 
+  										followers_count = linked_data$followers_count,
+  										stock_close = as.numeric(stock_data[, 4]),
+  										date_added = comm_dates)
+  
+  cindustry <- unique(dlink[company_name == name]$industry)
+  cindustry <- cindustry[!cindustry %in% ""]
+  ccompanies <- unique(dlink[industry %in% cindustry]$company_name)
+  
+  ind_data <- dlink[company_name %in% ccompanies, .(date_added, company_name, 
+                                             followers_count, employees_on_platform)]
+  
+  # dplyer seems to be more conveniet here
+  ind_data <- ind_data %>% group_by(date_added, company_name) %>% 
+         mutate(ind_followers_count = mean(followers_count),
+                ind_employees_on_platform = mean(employees_on_platform)) %>%
+         group_by(date_added) %>% 
+         summarise(ind_followers_count = sum(ind_followers_count),
+                ind_employees_on_platform = sum(ind_employees_on_platform))
+  setDT(ind_data)
+
+  #ind_data[, (vars) := lapply(.SD, function(y) as.vector(sum(y))), 
+  #         by = list(date_added, company_name), .SDcols = vars]
+  #ind_data[, (vars) := lapply(.SD, function(y) as.vector(mean(y))),
+  #                by = date_added, .SDcols = vars]
+  #setnames(ind_data, old = c("followers_count", "employees_on_platform"), 
+  #  new = c("ind_followers_count", "ind_employees_on_platform"))
+  #ind_data[, company_name := NULL]
+
+  ind_data <- ind_data[!duplicated(date_added)]
+  
+  setkey(dt, date_added)
+  setkey(ind_data, date_added)
+  dt <- merge(dt, ind_data, by = "date_added")
+  dt
+}
+```
+
+# Goldman Sachs
+
+Here we look at the Goldman Sachs company. 
+
+```{r}
+dt <- collate_data(dlink, name = "Goldman Sachs", sym = "GS")
+dt[, plot(stock_close ~ date_added)]
+dt[, plot(employees_on_platform ~ date_added)]
+dt[, plot(followers_count ~ date_added)]
+dt[, plot(ind_employees_on_platform ~ date_added)]
+dt[, plot(ind_followers_count ~ date_added)]
+```
+
+There are a large amount of unexplanable deviations in the data. For example, 
+it is difficult to beleive some of the changes in the number of employee in 
+LinkedIn over a short period of time. Let's try a median filter.
+
+```{r}
+median_filter <- function(x, n = 21){runmed(x, n)} 
+# filter on stock closing data
+dt[, plot(stock_close ~ date_added)]
+dt[, points(median_filter(stock_close) ~ date_added, type = "l", lwd = 2, col = "red")]
+
+# filter on total number of employee on comanies in same industry as Golsman Sachs
+dt[, plot(ind_employees_on_platform ~ date_added)]
+dt[, points(median_filter(ind_employees_on_platform) ~ date_added, type = "l", lwd = 2, col = "red")]
+```
+
+Seems to work fine. Apply the median filter to the data.
+```{r}
+vars <- colnames(dt)[-1]
+dt[, (vars) := lapply(.SD, function (y) as.vector(median_filter(y))), .SDcols = vars]
+```
+
+Let's consider if employees_on_platform has a relationship with the stock closing value.
+```{r}
+tall_df <- dt %>% gather(type, value, -date_added)
+ggplot(tall_df, aes(x = date_added, y = value)) + geom_point() +
+  geom_smooth(method = "lm") + facet_wrap(. ~ type, scales="free") 
+```
+
+As everything here increases with time, the stock closing value would show a
+positive relationship with any of the other four - even if they are meaningless.
+Let's try to see if the changes in the increase in the number of employees with time 
+can predict the chagnes in increase in the stock closing value with time.
+
+```{r}
+fitc <- dt[, lm(stock_close ~ date_added)]
+fite <- dt[, lm(employees_on_platform ~ date_added)]
+
+resid <- data.frame(close_resid = fitc$residuals,  emp_resid = fite$residuals)
+ggplot(resid, aes(x = emp_resid, y = close_resid)) + geom_point() + 
+  #geom_smooth(method = "lm", se = FALSE) + 
+  geom_hline(yintercept=0, linetype="dashed", color = "grey", size = 1.5) + 
+  geom_vline(xintercept=0, linetype="dashed", color = "grey", size = 1.5)+
+  ylab("Change in Increase of Stock Closing Value with Time") + 
+  xlab("Change in Increase of Employee Count Value with Time")  
+
+```
+
+```{r}
+# proporation of points in +,+ or -, - quadrents
+resid %>% 
+  summarise(prop = sum((close_resid < 0 & emp_resid < 0) | (close_resid > 0 & emp_resid > 0))/ n())
+
+```
+
+
+```{r}
+fite <- dt[, lm(followers_count ~ date_added)]
+
+resid <- data.frame(close_resid = fitc$residuals,  foll_resid = fite$residuals)
+ggplot(resid, aes(x = foll_resid, y = close_resid)) + geom_point() + 
+  #geom_smooth(method = "lm", se = FALSE) + 
+  geom_hline(yintercept=0, linetype="dashed", color = "grey", size = 1.5) + 
+  geom_vline(xintercept=0, linetype="dashed", color = "grey", size = 1.5) +
+  ylab("Change in Increase of Stock Closing Value with Time") + 
+  xlab("Change in Increase of Follower Count Value with Time")  
+
+```
+
+
+```{r}
+# proporation of points in +,+ or -, - quadrents
+resid %>% 
+  summarise(prop = sum((close_resid < 0 & foll_resid < 0) | (close_resid > 0 & foll_resid > 0))/ n())
+
+```
+
+# United Technologies Corporation (UTX)
+
+```{r}
+# data
+dt <- collate_data(dlink, name = "United Technologies", sym = "UTX")
+# filter
+dt[, (vars) := lapply(.SD, function (y) as.vector(median_filter(y))), .SDcols = vars]
+# plot
+tall_df <- dt %>% gather(type, value, -date_added)
+ggplot(tall_df, aes(x = date_added, y = value)) + geom_point() +
+  geom_smooth(method = "lm") + facet_wrap(. ~ type, scales="free") 
+
+```
+
+There appears to be somesort of a problme in the data where the total number of employees
+in LinkedIn has dropped significanly. We remove that part of the data from further analysis.
+```{r}
+dt <- dt[employees_on_platform > 10000]
+tall_df <- dt %>% gather(type, value, -date_added)
+ggplot(tall_df, aes(x = date_added, y = value)) + geom_point() +
+  geom_smooth(method = "lm") + facet_wrap(. ~ type, scales="free") 
+```
+
+```{r}
+fitc <- dt[, lm(stock_close ~ date_added)]
+fite <- dt[, lm(employees_on_platform ~ date_added)]
+
+resid <- data.frame(close_resid = fitc$residuals,  emp_resid = fite$residuals)
+ggplot(resid, aes(x = emp_resid, y = close_resid)) + geom_point() + 
+  #geom_smooth(method = "lm", se = FALSE) + 
+  geom_hline(yintercept=0, linetype="dashed", color = "grey", size = 1.5) + 
+  geom_vline(xintercept=0, linetype="dashed", color = "grey", size = 1.5)+
+  ylab("Change in Increase of Stock Closing Value with Time") + 
+  xlab("Change in Increase of Employee Count Value with Time")  
+
+```
+
+# IBM
+
+
+```{r}
+dt <- collate_data(dlink, name = "IBM", sym = "IBM")
+# filter
+dt[, (vars) := lapply(.SD, function (y) as.vector(median_filter(y))), .SDcols = vars]
+# plot
+tall_df <- dt %>% gather(type, value, -date_added)
+ggplot(tall_df, aes(x = date_added, y = value)) + geom_point() +
+  geom_smooth(method = "lm") + facet_wrap(. ~ type, scales="free") 
+```
+
+```{r}
+fitc <- dt[, lm(stock_close ~ date_added)]
+fite <- dt[, lm(employees_on_platform ~ date_added)]
+
+resid <- data.frame(close_resid = fitc$residuals,  emp_resid = fite$residuals)
+ggplot(resid, aes(x = emp_resid, y = close_resid)) + geom_point() + 
+  #geom_smooth(method = "lm", se = FALSE) + 
+  geom_hline(yintercept=0, linetype="dashed", color = "grey", size = 1.5) + 
+  geom_vline(xintercept=0, linetype="dashed", color = "grey", size = 1.5)+
+  ylab("Change in Increase of Stock Closing Value with Time") + 
+  xlab("Change in Increase of Employee Count Value with Time")  
+
+```
+
+
+```{r}
+# proporation of points in +,+ or -, - quadrents
+resid %>% 
+  summarise(prop = sum((close_resid < 0 & emp_resid < 0) | (close_resid > 0 & emp_resid > 0))/ n())
+```
+
+# Novo Nordisk
+
+
+```{r}
+dt <- collate_data(dlink, name = "Novo Nordisk", sym = "NVO")
+# filter
+dt[, (vars) := lapply(.SD, function (y) as.vector(median_filter(y))), .SDcols = vars]
+# plot
+tall_df <- dt %>% gather(type, value, -date_added)
+ggplot(tall_df, aes(x = date_added, y = value)) + geom_point() +
+  geom_smooth(method = "lm") + facet_wrap(. ~ type, scales="free") 
+
+fitc <- dt[, lm(stock_close ~ date_added)]
+fite <- dt[, lm(employees_on_platform ~ date_added)]
+
+resid <- data.frame(close_resid = fitc$residuals,  emp_resid = fite$residuals)
+ggplot(resid, aes(x = emp_resid, y = close_resid)) + geom_point() + 
+  #geom_smooth(method = "lm", se = FALSE) + 
+  geom_hline(yintercept=0, linetype="dashed", color = "grey", size = 1.5) + 
+  geom_vline(xintercept=0, linetype="dashed", color = "grey", size = 1.5)+
+  ylab("Change in Increase of Stock Closing Value with Time") + 
+  xlab("Change in Increase of Employee Count Value with Time") 
+```
+
+
+```{r}
+# proporation of points in +,+ or -, - quadrents
+resid %>% 
+  summarise(prop = sum((close_resid < 0 & emp_resid < 0) | (close_resid > 0 & emp_resid > 0))/ n())
+```
+
+# Apple (AAPL)
+
+
+```{r}
+dt <- collate_data(dlink, name = "Apple", sym = "AAPL")
+# filter
+dt[, (vars) := lapply(.SD, function (y) as.vector(median_filter(y))), .SDcols = vars]
+# plot
+tall_df <- dt %>% gather(type, value, -date_added)
+ggplot(tall_df, aes(x = date_added, y = value)) + geom_point() +
+  geom_smooth(method = "lm") + facet_wrap(. ~ type, scales="free") 
+
+fitc <- dt[, lm(stock_close ~ date_added)]
+fite <- dt[, lm(employees_on_platform ~ date_added)]
+
+resid <- data.frame(close_resid = fitc$residuals,  emp_resid = fite$residuals)
+ggplot(resid, aes(x = emp_resid, y = close_resid)) + geom_point() + 
+  #geom_smooth(method = "lm", se = FALSE) + 
+  geom_hline(yintercept=0, linetype="dashed", color = "grey", size = 1.5) + 
+  geom_vline(xintercept=0, linetype="dashed", color = "grey", size = 1.5)+
+  ylab("Change in Increase of Stock Closing Value with Time") + 
+  xlab("Change in Increase of Employee Count Value with Time") 
+```
+
+
+```{r}
+# proporation of points in +,+ or -, - quadrents
+resid %>% 
+  summarise(prop = sum((close_resid < 0 & emp_resid < 0) | (close_resid > 0 & emp_resid > 0))/ n())
+```
