@@ -2,7 +2,9 @@
 title: "Predictions of Stock Vaules using LinkedIn Data"
 author: "Suren Rathnayake"
 date: "29 July 2019"
-output: html_document
+output:
+  pdf_document: default
+  html_document: default
 ---
 
 ```{r setup, include=FALSE}
@@ -12,12 +14,12 @@ knitr::opts_chunk$set(echo = TRUE)
 ## Data
 
 The data contain daily records of number of employees of 
-a number of companis (who uses linkedin) and the number of
-linkedin followers. The data were obtained from the 
+a number of companies (who uses LinkedIn) and the number of
+LinkedIn followers. The data were obtained from the 
 website <https://blog.thedataincubator.com/tag/data-sources/>. 
 
 Here, I am investigating the predictability of the stock 
-prices based on the number of emploees and followers.
+prices based on the number of employees and followers.
 
 ```{r read, message=FALSE}
 library(data.table)
@@ -117,15 +119,18 @@ Here we look at the Goldman Sachs company.
 
 ```{r}
 dt <- collate_data(dlink, name = "Goldman Sachs", sym = "GS")
-dt[, plot(stock_close ~ date_added)]
-dt[, plot(employees_on_platform ~ date_added)]
-dt[, plot(followers_count ~ date_added)]
-dt[, plot(ind_employees_on_platform ~ date_added)]
-dt[, plot(ind_followers_count ~ date_added)]
+# dt[, plot(stock_close ~ date_added)]
+# dt[, plot(employees_on_platform ~ date_added)]
+# dt[, plot(followers_count ~ date_added)]
+# dt[, plot(ind_employees_on_platform ~ date_added)]
+# dt[, plot(ind_followers_count ~ date_added)]
+tall_df <- dt %>% gather(type, value, -date_added)
+ggplot(tall_df, aes(x = date_added, y = value)) + geom_point() +
+  facet_wrap(. ~ type, scales="free") 
 ```
 
-There are a large amount of unexplanable deviations in the data. For example, 
-it is difficult to beleive some of the changes in the number of employee in 
+There are a large amount of explainable deviations in the data. For example, 
+it is difficult to believe some of the changes in the number of employee in 
 LinkedIn over a short period of time. Let's try a median filter.
 
 ```{r}
@@ -155,7 +160,7 @@ ggplot(tall_df, aes(x = date_added, y = value)) + geom_point() +
 As everything here increases with time, the stock closing value would show a
 positive relationship with any of the other four - even if they are meaningless.
 Let's try to see if the changes in the increase in the number of employees with time 
-can predict the chagnes in increase in the stock closing value with time.
+can predict the changes in increase in the stock closing value with time.
 
 ```{r}
 fitc <- dt[, lm(stock_close ~ date_added)]
@@ -171,6 +176,8 @@ ggplot(resid, aes(x = emp_resid, y = close_resid)) + geom_point() +
 
 ```
 
+Proportion that would indicate change in the hiring increase
+would correctly predict the change in increase of the closing value of the stock prices.
 ```{r}
 # proporation of points in +,+ or -, - quadrents
 resid %>% 
@@ -178,7 +185,7 @@ resid %>%
 
 ```
 
-
+Here I consider the change in number of followers counts.
 ```{r}
 fite <- dt[, lm(followers_count ~ date_added)]
 
@@ -192,7 +199,9 @@ ggplot(resid, aes(x = foll_resid, y = close_resid)) + geom_point() +
 
 ```
 
-
+Proportion that would indicate change in the number of followers
+indicate the increase would correctly predict the change in
+increase of the closing value of the stock prices.
 ```{r}
 # proporation of points in +,+ or -, - quadrents
 resid %>% 
@@ -214,8 +223,8 @@ ggplot(tall_df, aes(x = date_added, y = value)) + geom_point() +
 
 ```
 
-There appears to be somesort of a problme in the data where the total number of employees
-in LinkedIn has dropped significanly. We remove that part of the data from further analysis.
+There appears to be some sort of a problem in the data where the total number of employees
+in LinkedIn has dropped significantly. We remove that part of the data from further analysis.
 ```{r}
 dt <- dt[employees_on_platform > 10000]
 tall_df <- dt %>% gather(type, value, -date_added)
@@ -264,7 +273,8 @@ ggplot(resid, aes(x = emp_resid, y = close_resid)) + geom_point() +
 
 ```
 
-
+Proportion that would indicate change in the hiring increase
+would correctly predict the change in increase of the closing value of the stock prices.
 ```{r}
 # proporation of points in +,+ or -, - quadrents
 resid %>% 
@@ -295,7 +305,8 @@ ggplot(resid, aes(x = emp_resid, y = close_resid)) + geom_point() +
   xlab("Change in Increase of Employee Count Value with Time") 
 ```
 
-
+Proportion that would indicate change in the hiring increase
+would correctly predict the change in increase of the closing value of the stock prices.
 ```{r}
 # proporation of points in +,+ or -, - quadrents
 resid %>% 
@@ -326,9 +337,29 @@ ggplot(resid, aes(x = emp_resid, y = close_resid)) + geom_point() +
   xlab("Change in Increase of Employee Count Value with Time") 
 ```
 
-
+Proportion that would indicate change in the hiring increase
+would correctly predict the change in increase of the closing value of the stock prices.
 ```{r}
 # proporation of points in +,+ or -, - quadrents
 resid %>% 
   summarise(prop = sum((close_resid < 0 & emp_resid < 0) | (close_resid > 0 & emp_resid > 0))/ n())
 ```
+
+# Conclustion
+
+Present analysis was done as an explanatory analysis to 
+investigate the use of LinkedIn data for the prediction of stock 
+prices. From the companies consisted in this analysis, it has 
+shown promising results from those involved in techno local 
+industry. Further analysis, and possibly including other 
+predictors, may reveal in what type companies such prediction 
+can be maid.
+
+
+
+
+
+
+
+
+
