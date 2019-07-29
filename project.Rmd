@@ -96,14 +96,6 @@ collate_data <- function(dlink, name, sym,
                 ind_employees_on_platform = sum(ind_employees_on_platform))
   setDT(ind_data)
 
-  #ind_data[, (vars) := lapply(.SD, function(y) as.vector(sum(y))), 
-  #         by = list(date_added, company_name), .SDcols = vars]
-  #ind_data[, (vars) := lapply(.SD, function(y) as.vector(mean(y))),
-  #                by = date_added, .SDcols = vars]
-  #setnames(ind_data, old = c("followers_count", "employees_on_platform"), 
-  #  new = c("ind_followers_count", "ind_employees_on_platform"))
-  #ind_data[, company_name := NULL]
-
   ind_data <- ind_data[!duplicated(date_added)]
   
   setkey(dt, date_added)
@@ -119,11 +111,7 @@ Here we look at the Goldman Sachs company.
 
 ```{r}
 dt <- collate_data(dlink, name = "Goldman Sachs", sym = "GS")
-# dt[, plot(stock_close ~ date_added)]
-# dt[, plot(employees_on_platform ~ date_added)]
-# dt[, plot(followers_count ~ date_added)]
-# dt[, plot(ind_employees_on_platform ~ date_added)]
-# dt[, plot(ind_followers_count ~ date_added)]
+
 tall_df <- dt %>% gather(type, value, -date_added)
 ggplot(tall_df, aes(x = date_added, y = value)) + geom_point() +
   facet_wrap(. ~ type, scales="free") 
@@ -150,7 +138,7 @@ vars <- colnames(dt)[-1]
 dt[, (vars) := lapply(.SD, function (y) as.vector(median_filter(y))), .SDcols = vars]
 ```
 
-Let's consider if employees_on_platform has a relationship with the stock closing value.
+Plot the extracted variables to visualize the data to see a relationship.
 ```{r}
 tall_df <- dt %>% gather(type, value, -date_added)
 ggplot(tall_df, aes(x = date_added, y = value)) + geom_point() +
@@ -167,6 +155,14 @@ fitc <- dt[, lm(stock_close ~ date_added)]
 fite <- dt[, lm(employees_on_platform ~ date_added)]
 
 resid <- data.frame(close_resid = fitc$residuals,  emp_resid = fite$residuals)
+plot(scale(resid$emp_resid), col="red", ylab = "Scaled Residuals")
+points(scale(resid$close_resid))
+```
+
+There appear to be relationship in this case - even though there is some time lag is present
+in it. Quantify the relationship.
+
+```{r}
 ggplot(resid, aes(x = emp_resid, y = close_resid)) + geom_point() + 
   #geom_smooth(method = "lm", se = FALSE) + 
   geom_hline(yintercept=0, linetype="dashed", color = "grey", size = 1.5) + 
@@ -184,8 +180,10 @@ resid %>%
   summarise(prop = sum((close_resid < 0 & emp_resid < 0) | (close_resid > 0 & emp_resid > 0))/ n())
 
 ```
+In this case, around two thirds of the time, changes in employees numbers may indicate the
+change in stock prices.
 
-Here I consider the change in number of followers counts.
+Here I consider the change in number of followers values.
 ```{r}
 fite <- dt[, lm(followers_count ~ date_added)]
 
@@ -208,6 +206,9 @@ resid %>%
   summarise(prop = sum((close_resid < 0 & foll_resid < 0) | (close_resid > 0 & foll_resid > 0))/ n())
 
 ```
+
+I have considered various linear fits to the stock values. Although, the effect of linear fit
+appear to be statistically significant, there actually isn't meaningful relationship.
 
 # United Technologies Corporation (UTX)
 
