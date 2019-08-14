@@ -3,8 +3,8 @@ title: "Predictions of Stock Vaules using LinkedIn Data"
 author: "Suren Rathnayake"
 date: "29 July 2019"
 output:
-  pdf_document: default
   html_document: default
+  pdf_document: default
 ---
 
 ```{r setup, include=FALSE}
